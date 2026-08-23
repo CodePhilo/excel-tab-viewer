@@ -1,0 +1,54 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# --- Virtual environments ---
+venv/
+.venv/
+env/
+ENV/
+
+# --- PyInstaller build output ---
+# excel_tab_viewer.spec is checked in on purpose (it's a hand-written build
+# config, not something PyInstaller generated for you) — only the actual
+# build output folders are ignored. Ship the .exe via GitHub Releases
+# instead of committing it (see GITHUB_PUBLISHING.md).
+build/
+dist/
+
+# --- App-generated local data (should never end up in the repo) ---
+# Saved profiles / crash logs normally live under %APPDATA%\ExcelTabViewer
+# on Windows and never touch this folder — these patterns are a safety net
+# in case a stray profiles/ folder or log ever gets created locally here.
+profiles/
+*.profile.json
+crash.log
+
+# --- Personal/test Excel files ---
+# Uncomment if you never intend to commit sample/test workbooks. Left
+# commented by default so you can still add real fixture files on purpose —
+# just double-check `git status` before committing any .xlsx you didn't
+# mean to include (see GITHUB_PUBLISHING.md, "repo structure check").
+# *.xlsx
+# *.xls
+# *.xlsm
+
+# --- IDE / editor ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- OS junk ---
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# --- Misc ---
+*.log
+.env
+GITHUB_PUBLISHING.md
+PACKAGING.md
+

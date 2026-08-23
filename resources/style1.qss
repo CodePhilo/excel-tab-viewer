@@ -1,0 +1,291 @@
+/* resources/style.qss
+   Clean, modern light theme. Subtle color, soft edges, consistent spacing —
+   no attempt at anything flashy, just a step up from raw default widgets. */
+
+QMainWindow {
+    background: #f5f6f8;
+}
+
+/* This app always renders its own light theme, regardless of the Windows
+   system theme setting. Windows dark mode causes Qt to apply a dark palette
+   to plain dialogs (QMessageBox, QInputDialog, and this app's custom
+   dialogs) automatically; forcing text color without also forcing a
+   matching background is what causes dark-text-on-dark-background problems.
+   So every widget gets both an explicit background AND text color here,
+   not just text color. */
+
+QWidget {
+    font-size: 13px;
+    background-color: #f5f6f8;
+    color: #202124;
+}
+
+QDialog {
+    background-color: #f5f6f8;
+}
+
+QMessageBox {
+    background-color: #f5f6f8;
+}
+
+QLabel {
+    background: transparent;
+    color: #202124;
+}
+
+/* --- Menu bar & menus --- */
+
+QMenuBar {
+    background: #ffffff;
+    border-bottom: 1px solid #dcdfe3;
+    padding: 2px 4px;
+}
+
+QMenuBar::item {
+    padding: 5px 10px;
+    border-radius: 4px;
+}
+
+QMenuBar::item:selected {
+    background: #e8edfb;
+}
+
+QMenu {
+    background: #ffffff;
+    border: 1px solid #dcdfe3;
+    padding: 4px;
+}
+
+QMenu::item {
+    padding: 6px 24px 6px 12px;
+    border-radius: 4px;
+}
+
+QMenu::item:selected {
+    background: #e8edfb;
+}
+
+QMenu::separator {
+    height: 1px;
+    background: #e3e5e8;
+    margin: 4px 8px;
+}
+
+/* --- Toolbar --- */
+
+QToolBar {
+    background: #ffffff;
+    border-bottom: 1px solid #dcdfe3;
+    padding: 4px;
+    spacing: 4px;
+}
+
+QToolButton {
+    padding: 5px 10px;
+    border-radius: 5px;
+    border: 1px solid transparent;
+}
+
+QToolButton:hover {
+    background: #e8edfb;
+    border: 1px solid #c8d4f5;
+}
+
+/* --- Status bar --- */
+
+QStatusBar {
+    background: #ffffff;
+    border-top: 1px solid #dcdfe3;
+    color: #5f6368;
+}
+
+/* --- Tabs --- */
+
+QTabWidget::pane {
+    border: 1px solid #dcdfe3;
+    background: #ffffff;
+    top: -1px;
+}
+
+QTabBar::tab {
+    background: #eceef1;
+    color: #5f6368;
+    padding: 7px 16px;
+    margin-right: 2px;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+}
+
+QTabBar::tab:selected {
+    background: #ffffff;
+    color: #202124;
+    border: 1px solid #dcdfe3;
+    border-bottom: none;
+}
+
+QTabBar::tab:hover:!selected {
+    background: #e3e6ea;
+}
+
+QTabBar::close-button {
+    subcontrol-position: right;
+    padding: 2px;
+}
+
+/* --- Dock widgets (sidebar, search results) --- */
+
+QDockWidget {
+    titlebar-close-icon: none;
+    color: #202124;
+}
+
+QDockWidget::title {
+    background: #eceef1;
+    padding: 6px 8px;
+    border-bottom: 1px solid #dcdfe3;
+    font-weight: 600;
+}
+
+/* --- Trees & lists --- */
+
+QTreeWidget {
+    background: #ffffff;
+    border: 1px solid #dcdfe3;
+    alternate-background-color: #f7f8fa;
+    outline: none;
+}
+
+QTreeWidget::item {
+    padding: 3px 2px;
+}
+
+QTreeWidget::item:selected {
+    background: #dbe6ff;
+    color: #202124;
+}
+
+/* --- Tables --- */
+
+QTableView {
+    background: #ffffff;
+    alternate-background-color: #f3f5f8;
+    gridline-color: #e6e8eb;
+    selection-background-color: #dbe6ff;
+    selection-color: #202124;
+    border: none;
+}
+
+QTableView::item {
+    padding: 2px 6px;
+    color: #202124;
+    background: transparent;
+}
+
+QHeaderView::section {
+    background: #eceef1;
+    color: #3c4043;
+    padding: 6px 8px;
+    border: none;
+    border-right: 1px solid #dcdfe3;
+    border-bottom: 1px solid #dcdfe3;
+    font-weight: 600;
+}
+
+/* --- Buttons --- */
+
+QPushButton {
+    background: #ffffff;
+    border: 1px solid #c7cbd1;
+    border-radius: 5px;
+    padding: 6px 14px;
+}
+
+QPushButton:hover {
+    background: #f2f4f8;
+    border-color: #a9b4c4;
+}
+
+QPushButton:pressed {
+    background: #e6eaf1;
+}
+
+QPushButton:disabled {
+    color: #a8abaf;
+    background: #f5f6f8;
+    border-color: #e0e2e5;
+}
+
+/* Primary-feeling action buttons (kept subtle, no heavy branding) */
+#emptyStateButton {
+    background: #3b6fe0;
+    color: #ffffff;
+    border: none;
+    padding: 9px 18px;
+    font-weight: 600;
+}
+
+#emptyStateButton:hover {
+    background: #315fc4;
+}
+
+#emptyStateButton:pressed {
+    background: #2a52ab;
+}
+
+/* --- Inputs --- */
+
+QLineEdit, QComboBox {
+    background: #ffffff;
+    border: 1px solid #c7cbd1;
+    border-radius: 5px;
+    padding: 5px 8px;
+}
+
+QLineEdit:focus, QComboBox:focus {
+    border: 1px solid #3b6fe0;
+}
+
+QComboBox::drop-down {
+    border: none;
+    width: 20px;
+}
+
+QComboBox QAbstractItemView {
+    background-color: #ffffff;
+    color: #202124;
+    selection-background-color: #dbe6ff;
+    selection-color: #202124;
+    border: 1px solid #c7cbd1;
+    outline: none;
+}
+
+/* --- Group boxes (filter panel) --- */
+
+QGroupBox {
+    border: 1px solid #dcdfe3;
+    border-radius: 6px;
+    margin-top: 10px;
+    padding-top: 12px;
+    font-weight: 600;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    left: 10px;
+    padding: 0 4px;
+    color: #3c4043;
+}
+
+/* --- Empty state --- */
+
+#emptyStateTitle {
+    font-size: 20px;
+    font-weight: 700;
+    color: #202124;
+}
+
+#emptyStateSubtitle {
+    font-size: 13px;
+    color: #5f6368;
+    max-width: 360px;
+}
