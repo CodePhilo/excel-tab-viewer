@@ -28,6 +28,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from core.formatting import display_text
+
 HEADER_COLUMN_WIDTH = 160  # px; long header names wrap within this instead of pushing values far right
 ROW_SHADE_EVEN = "#ffffff"
 ROW_SHADE_ODD = "#f3f5f8"
@@ -57,7 +59,7 @@ class RowDetailDialog(QDialog):
 
         for i, column_name in enumerate(row.index):
             value = row[column_name]
-            text = "" if pd.isna(value) else str(value)
+            text = display_text(value)
             shade = ROW_SHADE_EVEN if i % 2 == 0 else ROW_SHADE_ODD
 
             label = QLabel(str(column_name))

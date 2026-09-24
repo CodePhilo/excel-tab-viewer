@@ -23,6 +23,8 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt
 
+from core.formatting import display_text
+
 PREVIEW_ROW_COUNT = 10
 
 
@@ -67,7 +69,7 @@ class HeaderRowDialog(QDialog):
         for r in range(len(preview_df)):
             for c in range(len(preview_df.columns)):
                 value = preview_df.iat[r, c]
-                text = "" if pd.isna(value) else str(value)
+                text = display_text(value)
                 item = QTableWidgetItem(text)
                 item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
                 self.table.setItem(r, c, item)

@@ -250,7 +250,7 @@ class FileTab(QWidget):
         if not quick_text and not conditions:
             self.model.clear_filter()
         else:
-            mask = compile_quick_search(full_df, quick_column, quick_text)
+            mask = compile_quick_search(self.model.text_frame(), quick_column, quick_text)
             if conditions:
                 mask &= compile_conditions(full_df, conditions)
             self.model.apply_filter(mask)

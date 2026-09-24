@@ -17,6 +17,8 @@ import html
 import pandas as pd
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 
+from core.formatting import display_text, to_text_frame
+
 TOOLTIP_MAX_CHARS = 1000
 TOOLTIP_MAX_LINES = 25
 
@@ -46,6 +48,7 @@ class ExcelTableModel(QAbstractTableModel):
         super().__init__(parent)
         self._full_df = df
         self._view_df = df
+        self._text_df: pd.DataFrame | None = None  # lazily built display-text copy of _full_df
 
     # --- Qt required overrides -------------------------------------------------
 
@@ -62,11 +65,12 @@ class ExcelTableModel(QAbstractTableModel):
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
         if not index.isValid():
             return None
-        value = self._view_df.iat[index.row(), index.column()]
-        if pd.isna(value):
+        if role not in (Qt.DisplayRole, Qt.ToolTipRole):
+            return None
+        text = display_text(self._view_df.iat[index.row(), index.column()])
+        if not text:
             return "" if role == Qt.DisplayRole else None
         if role == Qt.DisplayRole:
-            text = str(value)
             if "\n" in text or "\r" in text:
                 # Collapse embedded line breaks so a multi-line cell can't force
                 # the column absurdly wide. The DataFrame itself is untouched —
@@ -74,9 +78,7 @@ class ExcelTableModel(QAbstractTableModel):
                 # search, and export all still see the real, unmodified value.
                 text = text.replace("\r\n", " ⏎ ").replace("\n", " ⏎ ").replace("\r", " ⏎ ")
             return text
-        if role == Qt.ToolTipRole:
-            return _tooltip_text(str(value))  # original value, real line breaks preserved
-        return None
+        return _tooltip_text(text)  # tooltip: real line breaks preserved
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
         if role == Qt.ToolTipRole and orientation == Qt.Horizontal:
@@ -93,8 +95,14 @@ class ExcelTableModel(QAbstractTableModel):
     def cell_text(self, row: int, column: int) -> str:
         """The full, unmodified text of a visible cell (no line-break collapsing),
         for copying and the cell preview."""
-        value = self._view_df.iat[row, column]
-        return "" if pd.isna(value) else str(value)
+        return display_text(self._view_df.iat[row, column])
+
+    def text_frame(self) -> pd.DataFrame:
+        """All of _full_df as display text, for quick/cross-tab search. Built on
+        first use and reused until the data is replaced (Refresh)."""
+        if self._text_df is None:
+            self._text_df = to_text_frame(self._full_df)
+        return self._text_df
 
     def column_names(self) -> list[str]:
         return [str(c) for c in self._full_df.columns]
@@ -110,6 +118,7 @@ class ExcelTableModel(QAbstractTableModel):
         self.beginResetModel()
         self._full_df = df
         self._view_df = df
+        self._text_df = None
         self.endResetModel()
 
     # --- Filtering ---------------------------------------------------------------

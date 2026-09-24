@@ -19,6 +19,8 @@ from typing import Optional
 
 import pandas as pd
 
+from core.formatting import to_text_series
+
 # Operators that need no value at all (e.g. "is empty").
 NO_VALUE_OPERATORS = {"is_empty", "not_empty"}
 # Operators that need exactly one value.
@@ -61,7 +63,7 @@ class FilterCondition:
 
 
 def _is_empty_mask(series: pd.Series) -> pd.Series:
-    return series.isna() | (series.astype(str).str.strip() == "")
+    return to_text_series(series).str.strip() == ""
 
 
 def _has_wildcards(text: str) -> bool:
@@ -112,25 +114,27 @@ def _compile_one(df: pd.DataFrame, cond: FilterCondition) -> pd.Series:
     if cond.operator == "not_empty":
         return ~_is_empty_mask(series)
 
+    # Text comparisons run against the same text the table displays (blank
+    # cells as "", not "nan"; 12.0 as "12"), so they match what's on screen.
     if cond.operator == "contains":
         text = "" if cond.value is None else str(cond.value)
         if _has_wildcards(text):
-            return series.astype(str).str.match(_wildcard_pattern(text), case=False, na=False)
-        return series.astype(str).str.contains(text, case=False, na=False, regex=False)
+            return to_text_series(series).str.match(_wildcard_pattern(text), case=False, na=False)
+        return to_text_series(series).str.contains(text, case=False, na=False, regex=False)
 
     if cond.operator in ("equals", "not_equals", "gte", "lte"):
         target = _coerce_value(series, cond.value)
         if cond.operator == "equals":
             if isinstance(target, str) and _has_wildcards(target):
-                return series.astype(str).str.match(_wildcard_pattern(target), case=False, na=False)
+                return to_text_series(series).str.match(_wildcard_pattern(target), case=False, na=False)
             if isinstance(target, str):
-                return series.astype(str).str.lower() == target.lower()
+                return to_text_series(series).str.lower() == target.lower()
             return series == target
         if cond.operator == "not_equals":
             if isinstance(target, str) and _has_wildcards(target):
-                return ~series.astype(str).str.match(_wildcard_pattern(target), case=False, na=False)
+                return ~to_text_series(series).str.match(_wildcard_pattern(target), case=False, na=False)
             if isinstance(target, str):
-                return series.astype(str).str.lower() != target.lower()
+                return to_text_series(series).str.lower() != target.lower()
             return series != target
         if cond.operator == "gte":
             return series >= target
@@ -164,29 +168,32 @@ def compile_conditions(df: pd.DataFrame, conditions: list[FilterCondition]) -> p
     return mask
 
 
-def compile_quick_search(df: pd.DataFrame, column: Optional[str], text: str) -> pd.Series:
+def compile_quick_search(text_df: pd.DataFrame, column: Optional[str], text: str) -> pd.Series:
     """
-    Quick single-box search. If column is None (or 'All Columns'), search every
-    column; otherwise restrict to the one selected column. Case-insensitive
-    'contains' semantics for plain text; '*'/'?' wildcards switch to a
-    whole-string glob match (Excel-style) when present.
+    Quick single-box search over `text_df` — the sheet already converted to
+    display text (core.formatting.to_text_frame; ExcelTableModel.text_frame()
+    caches it), so each keystroke doesn't re-convert every cell. If column is
+    None (or 'All Columns'), search every column; otherwise restrict to the
+    one selected column. Case-insensitive 'contains' semantics for plain
+    text; '*'/'?' wildcards switch to a whole-string glob match (Excel-style)
+    when present.
     """
     if not text:
-        return pd.Series(True, index=df.index)
+        return pd.Series(True, index=text_df.index)
 
     has_wild = _has_wildcards(text)
     pattern = _wildcard_pattern(text) if has_wild else None
 
     def _match(col: pd.Series) -> pd.Series:
         if has_wild:
-            return col.astype(str).str.match(pattern, case=False, na=False)
-        return col.astype(str).str.contains(text, case=False, na=False, regex=False)
+            return col.str.match(pattern, case=False, na=False)
+        return col.str.contains(text, case=False, na=False, regex=False)
 
-    if column and column in df.columns:
-        return _match(df[column])
+    if column and column in text_df.columns:
+        return _match(text_df[column])
 
     # Search across all columns: match if ANY column contains the text.
-    mask = pd.Series(False, index=df.index)
-    for col in df.columns:
-        mask |= _match(df[col])
+    mask = pd.Series(False, index=text_df.index)
+    for col in text_df.columns:
+        mask |= _match(text_df[col])
     return mask

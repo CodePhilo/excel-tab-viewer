@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QFrame,
 )
 
+from core.formatting import display_text
 from core.filters import (
     FilterCondition,
     OPERATOR_LABELS,
@@ -138,7 +139,7 @@ class ConditionRow(QWidget):
         except Exception:
             uniques = []
         if len(uniques) <= MAX_DROPDOWN_UNIQUE_VALUES:
-            for v in sorted(map(str, uniques))[:MAX_DROPDOWN_UNIQUE_VALUES]:
+            for v in sorted(set(map(display_text, uniques)))[:MAX_DROPDOWN_UNIQUE_VALUES]:
                 self.value1_combo.addItem(v)
         self.value1_combo.setEditText("")
 

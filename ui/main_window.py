@@ -34,14 +34,13 @@ from PySide6.QtWidgets import (
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt, QSettings
 
-import pandas as pd
-
 from ui.dock_title_bar import DockTitleBar
 from ui.file_tab import FileTab
 from ui.sheet_select_dialog import SheetSelectDialog
 from ui.header_row_dialog import HeaderRowDialog
 from core.excel_loader import list_sheet_names, load_sheet_preview, ExcelLoadError
 from core.filters import compile_quick_search
+from core.formatting import display_text
 from core import profile_manager
 from core.profile_manager import ProfileError
 
@@ -53,9 +52,7 @@ DEFAULT_WINDOW_SIZE = (1200, 750)
 def _preview_value(value) -> str:
     """One short, single-line rendering of a cell for a search-result line —
     a long or multi-line cell otherwise made that result row enormous."""
-    if pd.isna(value):
-        return ""
-    text = " ".join(str(value).split())
+    text = " ".join(display_text(value).split())
     if len(text) > MAX_PREVIEW_VALUE_CHARS:
         text = text[: MAX_PREVIEW_VALUE_CHARS - 1] + "…"
     return text
@@ -567,7 +564,7 @@ class MainWindow(QMainWindow):
         for i in range(self.tab_widget.count()):
             tab = self.tab_widget.widget(i)
             full_df = tab.model._full_df  # search the whole file, ignoring this tab's own filters
-            mask = compile_quick_search(full_df, None, text)
+            mask = compile_quick_search(tab.model.text_frame(), None, text)
             matched_positions = mask.to_numpy().nonzero()[0]  # 0-based positions, matching table row order
             if len(matched_positions) == 0:
                 continue
@@ -726,7 +723,12 @@ class MainWindow(QMainWindow):
         if not name:
             return
 
-        if profile_manager.profile_exists(name):
+        try:
+            exists = profile_manager.profile_exists(name)
+        except ProfileError as exc:  # e.g. a name containing / : * ? — used to escape as a crash
+            QMessageBox.warning(self, "Invalid Profile Name", str(exc))
+            return
+        if exists:
             reply = QMessageBox.question(
                 self,
                 "Overwrite Profile?",
