@@ -51,6 +51,15 @@ def list_sheet_names(path: str) -> list[str]:
         )
 
 
+# Passed to every read_excel() call. By default pandas re-parses text cells
+# as if they came from a CSV: a text column holding "0044", "+0044123" or
+# "00012" silently becomes the integers 44 / 44123 / 12, and text such as
+# "N/A", "NA", "null" or "None" becomes an empty cell. dtype=object keeps
+# every cell exactly as openpyxl/xlrd returned it (text stays text, real
+# numbers stay numbers), and only genuinely blank cells count as missing.
+_READ_OPTIONS = dict(dtype=object, keep_default_na=False, na_values=[""])
+
+
 def load_sheet(path: str, sheet_name: str, header_row: int = 0) -> pd.DataFrame:
     """
     Load a single sheet into a DataFrame. `header_row` is 0-indexed (row 0 =
@@ -65,7 +74,11 @@ def load_sheet(path: str, sheet_name: str, header_row: int = 0) -> pd.DataFrame:
 
     try:
         engine = "openpyxl" if path.lower().endswith(("xlsx", "xlsm")) else None
-        df = pd.read_excel(path, sheet_name=sheet_name, header=header_row, engine=engine)
+        df = pd.read_excel(path, sheet_name=sheet_name, header=header_row, engine=engine, **_READ_OPTIONS)
+        # Give columns whose cells were real numbers/dates in Excel a proper
+        # numeric/datetime dtype again (so >=, <=, between compare correctly).
+        # A column containing any text cell stays text, untouched.
+        df = df.infer_objects()
         # Normalize column names to strings (handles stray numeric/blank headers).
         df.columns = [str(c) for c in df.columns]
         return df
@@ -100,7 +113,9 @@ def load_sheet_preview(path: str, sheet_name: str, n_rows: int = 10) -> pd.DataF
 
     try:
         engine = "openpyxl" if path.lower().endswith(("xlsx", "xlsm")) else None
-        df = pd.read_excel(path, sheet_name=sheet_name, header=None, nrows=n_rows, engine=engine)
+        df = pd.read_excel(
+            path, sheet_name=sheet_name, header=None, nrows=n_rows, engine=engine, **_READ_OPTIONS
+        )
         df.columns = [str(c) for c in df.columns]
         return df
     except PermissionError:
