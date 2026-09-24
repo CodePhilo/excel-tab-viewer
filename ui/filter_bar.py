@@ -20,7 +20,7 @@ from __future__ import annotations
 from typing import Optional
 
 import pandas as pd
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal, QSettings, QSize
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -30,6 +30,8 @@ from PySide6.QtWidgets import (
     QComboBox,
     QPushButton,
     QGroupBox,
+    QScrollArea,
+    QFrame,
 )
 
 from core.filters import (
@@ -42,6 +44,36 @@ from core.filters import (
 QUICK_SEARCH_DEBOUNCE_MS = 300
 ALL_COLUMNS_LABEL = "All Columns"
 MAX_DROPDOWN_UNIQUE_VALUES = 200  # avoid populating a combo with huge unique sets
+MAX_COMBO_WIDTH = 260  # px; long column names / values are elided instead of widening the window
+MAX_CONDITIONS_HEIGHT = 130  # px; about three condition rows, then the list scrolls
+FILTERS_VISIBLE_SETTING = "filters/visible"
+
+
+def _bound_combo(combo: QComboBox, min_chars: int = 8) -> None:
+    """Stop a combo from sizing itself to its widest item. By default a
+    QComboBox is as wide as its longest entry, so one long column name (or
+    cell value, in the value dropdown) forced the whole window wider than
+    the screen. Items keep their real text; the full current text is shown
+    as the tooltip."""
+    combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+    combo.setMinimumContentsLength(min_chars)
+    combo.setMaximumWidth(MAX_COMBO_WIDTH)
+    combo.currentTextChanged.connect(combo.setToolTip)
+
+
+class _ConditionsScrollArea(QScrollArea):
+    """Scroll area that is exactly as tall as its condition rows, up to
+    MAX_CONDITIONS_HEIGHT, then scrolls. (A plain QScrollArea's size hint
+    ignores its content, and a height computed when a row is added is taken
+    before the stylesheet has sized the widgets, so it came out too short.)"""
+
+    def sizeHint(self) -> QSize:
+        hint = super().sizeHint()
+        content = self.widget().sizeHint().height() if self.widget() else 0
+        return QSize(hint.width(), min(content, MAX_CONDITIONS_HEIGHT) + 2 * self.frameWidth())
+
+    def minimumSizeHint(self) -> QSize:
+        return QSize(super().minimumSizeHint().width(), self.sizeHint().height())
 
 
 class ConditionRow(QWidget):
@@ -54,9 +86,11 @@ class ConditionRow(QWidget):
         self._df = df
 
         self.column_combo = QComboBox()
+        _bound_combo(self.column_combo)
         self.column_combo.addItems([str(c) for c in df.columns])
 
         self.operator_combo = QComboBox()
+        _bound_combo(self.operator_combo)
         for op_key, op_label in OPERATOR_LABELS.items():
             self.operator_combo.addItem(op_label, userData=op_key)
         self.operator_combo.currentIndexChanged.connect(self._update_value_widgets)
@@ -66,16 +100,10 @@ class ConditionRow(QWidget):
         # allowing free-typed text for contains/between/etc.
         self.value1_combo = QComboBox()
         self.value1_combo.setEditable(True)
-        # Without this, QComboBox's default sizing grows to fit its widest
-        # dropdown item — and since this dropdown is pre-filled with a
-        # column's actual unique values, one long or multi-line cell value
-        # was enough to balloon this widget (and the whole window) far wider
-        # than the screen. Bounding it here doesn't touch the item values
-        # themselves, so exact-match ("Equals") filtering still compares
-        # against the real, untruncated value.
-        self.value1_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.value1_combo.setMinimumContentsLength(24)
-        self.value1_combo.setMaximumWidth(320)
+        # Bounding the width doesn't touch the item values themselves, so
+        # exact-match ("Equals") filtering still compares against the real,
+        # untruncated value.
+        _bound_combo(self.value1_combo)
         self.value2_edit = QLineEdit()
         self.value2_edit.setPlaceholderText("to...")
 
@@ -186,6 +214,7 @@ class FilterBar(QWidget):
 
         # --- Quick search row ---
         self.quick_column_combo = QComboBox()
+        _bound_combo(self.quick_column_combo)
         self.quick_column_combo.addItem(ALL_COLUMNS_LABEL)
         self.quick_column_combo.addItems([str(c) for c in df.columns])
 
@@ -203,16 +232,37 @@ class FilterBar(QWidget):
         )
         self.quick_column_combo.currentIndexChanged.connect(lambda _index: self.filters_changed.emit())
 
+        # Show/hide the multi-column panel, so on a short screen the table can
+        # have the space back. The choice is remembered for new tabs too.
+        self.toggle_filters_btn = QPushButton()
+        self.toggle_filters_btn.setCheckable(True)
+        self.toggle_filters_btn.toggled.connect(self._set_filters_visible)
+
         quick_row = QHBoxLayout()
         quick_row.addWidget(QLabel("Quick search:"))
         quick_row.addWidget(self.quick_column_combo, stretch=1)
         quick_row.addWidget(self.quick_search_edit, stretch=3)
         quick_row.addWidget(self.quick_clear_btn)
+        quick_row.addWidget(self.toggle_filters_btn)
 
         # --- Multi-column condition panel ---
         self.conditions_group = QGroupBox("Filters (all conditions must match)")
         self.conditions_layout = QVBoxLayout()
         self.conditions_group.setLayout(self.conditions_layout)
+
+        # Condition rows live in their own scroll area: past about three rows
+        # the list scrolls, instead of every added row pushing the table down.
+        rows_container = QWidget()
+        self.rows_layout = QVBoxLayout(rows_container)
+        self.rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.rows_layout.addStretch(1)  # rows stay packed at the top, not spread out
+        self.rows_scroll = _ConditionsScrollArea()
+        self.rows_scroll.setObjectName("conditionsScroll")
+        self.rows_scroll.setWidgetResizable(True)
+        self.rows_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.rows_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.rows_scroll.setWidget(rows_container)
+        self.conditions_layout.addWidget(self.rows_scroll)
 
         add_row_btn = QPushButton("+ Add Condition")
         add_row_btn.clicked.connect(self.add_condition_row)
@@ -238,6 +288,11 @@ class FilterBar(QWidget):
 
         self.add_condition_row()  # start with one empty row for convenience
 
+        visible = QSettings().value(FILTERS_VISIBLE_SETTING, True, type=bool)
+        self.toggle_filters_btn.setChecked(visible)
+        self._set_filters_visible(visible)
+        self.filters_changed.connect(self._update_toggle_label)
+
     # --- Quick search --------------------------------------------------------------
 
     def _clear_quick_search(self) -> None:
@@ -251,21 +306,40 @@ class FilterBar(QWidget):
         text = self.quick_search_edit.text().strip()
         return (None if column == ALL_COLUMNS_LABEL else column, text)
 
+    # --- Show/hide the condition panel ------------------------------------------------
+
+    def _set_filters_visible(self, visible: bool) -> None:
+        self.conditions_group.setVisible(visible)
+        QSettings().setValue(FILTERS_VISIBLE_SETTING, visible)
+        self._update_toggle_label()
+
+    def _update_toggle_label(self) -> None:
+        if self.toggle_filters_btn.isChecked():
+            self.toggle_filters_btn.setText("Hide Filters")
+            return
+        # While hidden, still show how many conditions are in effect.
+        count = len(self.active_conditions())
+        self.toggle_filters_btn.setText(f"Show Filters ({count})" if count else "Show Filters")
+
     # --- Condition rows --------------------------------------------------------------
+
+    def _fit_rows_height(self) -> None:
+        self.rows_scroll.updateGeometry()  # re-read _ConditionsScrollArea.sizeHint()
 
     def add_condition_row(self) -> None:
         row = ConditionRow(self._df)
         row.remove_requested.connect(self._remove_condition_row)
-        # Insert above the buttons row, which is always the last item in the layout.
-        insert_index = self.conditions_layout.count() - 1
-        self.conditions_layout.insertWidget(insert_index, row)
+        self.rows_layout.insertWidget(self.rows_layout.count() - 1, row)  # above the stretch
         self._condition_rows.append(row)
+        self._fit_rows_height()
+        QTimer.singleShot(0, lambda: self.rows_scroll.ensureWidgetVisible(row))  # once laid out
 
     def _remove_condition_row(self, row: ConditionRow) -> None:
         if row in self._condition_rows:
             self._condition_rows.remove(row)
-        self.conditions_layout.removeWidget(row)
+        self.rows_layout.removeWidget(row)
         row.deleteLater()
+        self._fit_rows_height()
 
     def clear_conditions(self) -> None:
         for row in list(self._condition_rows):

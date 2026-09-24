@@ -12,8 +12,33 @@ clear_filter() without reshaping the model itself.
 
 from __future__ import annotations
 
+import html
+
 import pandas as pd
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
+
+TOOLTIP_MAX_CHARS = 1000
+TOOLTIP_MAX_LINES = 25
+
+
+def _tooltip_text(text: str) -> str:
+    """Bounded, wrapping tooltip for a cell value. Qt never wraps a plain-text
+    tooltip, so a long cell produced a tooltip wider than the screen (and a
+    many-line cell one taller than it). Rich text makes Qt wrap it to a sane
+    width; very long values are cut short with a pointer to the row detail
+    view, which always shows the full value."""
+    truncated = False
+    if len(text) > TOOLTIP_MAX_CHARS:
+        text = text[:TOOLTIP_MAX_CHARS]
+        truncated = True
+    lines = text.splitlines()
+    if len(lines) > TOOLTIP_MAX_LINES:
+        lines = lines[:TOOLTIP_MAX_LINES]
+        truncated = True
+    body = "<br>".join(html.escape(line) for line in lines)
+    if truncated:
+        body += "<br><i>... (double-click the row to see the full value)</i>"
+    return f"<qt>{body}</qt>"
 
 
 class ExcelTableModel(QAbstractTableModel):
@@ -50,10 +75,13 @@ class ExcelTableModel(QAbstractTableModel):
                 text = text.replace("\r\n", " ⏎ ").replace("\n", " ⏎ ").replace("\r", " ⏎ ")
             return text
         if role == Qt.ToolTipRole:
-            return str(value)  # full original value, real line breaks preserved
+            return _tooltip_text(str(value))  # original value, real line breaks preserved
         return None
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
+        if role == Qt.ToolTipRole and orientation == Qt.Horizontal:
+            # Long header names are elided in the capped-width column; show them in full here.
+            return _tooltip_text(str(self._view_df.columns[section]))
         if role != Qt.DisplayRole:
             return None
         if orientation == Qt.Horizontal:
@@ -61,6 +89,12 @@ class ExcelTableModel(QAbstractTableModel):
         return str(section + 1)  # 1-based row numbers, like Excel
 
     # --- Convenience accessors ---------------------------------------------------
+
+    def cell_text(self, row: int, column: int) -> str:
+        """The full, unmodified text of a visible cell (no line-break collapsing),
+        for copying and the cell preview."""
+        value = self._view_df.iat[row, column]
+        return "" if pd.isna(value) else str(value)
 
     def column_names(self) -> list[str]:
         return [str(c) for c in self._full_df.columns]

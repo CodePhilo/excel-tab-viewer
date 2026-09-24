@@ -74,6 +74,7 @@ def main() -> None:
     _install_exception_hook()
 
     app = QApplication(sys.argv)
+    app.setOrganizationName("ExcelTabViewer")  # QSettings (window layout, filter panel) key off these
     app.setApplicationName("Excel Tab Viewer")
     app.setStyle("Fusion")  # native styles ignore custom QSS sub-controls (icons,
                              # checkboxes, arrows) — Fusion respects them fully

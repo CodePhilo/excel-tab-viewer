@@ -20,26 +20,37 @@ from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QLabel,
     QTableView,
     QHeaderView,
     QPushButton,
     QMessageBox,
     QAbstractItemView,
     QStyledItemDelegate,
+    QApplication,
+    QMenu,
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QKeySequence, QShortcut
 
 from models.table_model import ExcelTableModel
 from core.excel_loader import load_sheet, ExcelLoadError
 from core.filters import compile_conditions, compile_quick_search, FilterCondition
 from ui.column_manager_dialog import ColumnManagerDialog
+from ui.elided_label import ElidedLabel
 from ui.filter_bar import FilterBar
 from ui.row_detail_dialog import RowDetailDialog
 
 MAX_COLUMN_WIDTH = 320  # px; wide cells (e.g. multi-line text) get elided rather than stretching the column
+MAX_TAB_LABEL_CHARS = 40  # longer file/sheet names are shortened on the tab itself (full name in its tooltip)
 ROW_HIGHLIGHT_COLOR = QColor("#ffe58a")
+
+
+def _tsv_field(text: str) -> str:
+    """Quote a value for tab-separated clipboard text the way Excel does, so a
+    cell containing tabs, line breaks, or quotes pastes back as one cell."""
+    if any(ch in text for ch in ('\t', '\n', '\r', '"')):
+        return '"' + text.replace('"', '""') + '"'
+    return text
 
 
 class _RowHighlightDelegate(QStyledItemDelegate):
@@ -61,6 +72,9 @@ class _RowHighlightDelegate(QStyledItemDelegate):
 
 
 class FileTab(QWidget):
+    # (title, full text) of the table's current cell, or ("", "") when there is none.
+    current_cell_changed = Signal(str, str)
+
     def __init__(self, file_path: str, sheet_name: str, header_row: int = 0, parent=None):
         super().__init__(parent)
         self.file_path = file_path
@@ -77,7 +91,7 @@ class FileTab(QWidget):
         df = load_sheet(file_path, sheet_name, header_row=header_row)  # raises ExcelLoadError on failure
         self.model = ExcelTableModel(df)
 
-        self.info_label = QLabel()
+        self.info_label = ElidedLabel()
         self._update_info_label()
 
         self.manage_columns_btn = QPushButton("Manage Columns...")
@@ -106,11 +120,28 @@ class FileTab(QWidget):
         self.table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.table_view.horizontalHeader().setStretchLastSection(False)
         self.table_view.setTextElideMode(Qt.TextElideMode.ElideRight)
+        # Headers are centered by default, so a long header name in a capped
+        # column was clipped on both sides; left-align and elide it instead
+        # (the full name is in the header's tooltip).
+        header = self.table_view.horizontalHeader()
+        header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        header.setTextElideMode(Qt.TextElideMode.ElideRight)
         self.table_view.setWordWrap(False)
         self.table_view.setItemDelegate(_RowHighlightDelegate(self, self.table_view))
         self.table_view.resizeColumnsToContents()
         self._cap_column_widths()
+        # Double-clicking a column divider auto-fits that column to its content,
+        # uncapped — a long-text column became tens of thousands of px wide.
+        # Qt's own auto-fit is connected first, so this runs right after it.
+        self.table_view.horizontalHeader().sectionHandleDoubleClicked.connect(self._cap_column_width)
         self.table_view.doubleClicked.connect(self._show_row_detail)
+        self.table_view.selectionModel().currentChanged.connect(self._emit_current_cell)
+
+        copy_shortcut = QShortcut(QKeySequence.StandardKey.Copy, self.table_view)
+        copy_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+        copy_shortcut.activated.connect(self.copy_selection)
+        self.table_view.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table_view.customContextMenuRequested.connect(self._show_table_context_menu)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
@@ -136,8 +167,55 @@ class FileTab(QWidget):
         above) rather than stretching the column — this is what actually fixes
         the wide-cell problem; resizeColumnsToContents() alone doesn't cap width."""
         for col_index in range(self.model.columnCount()):
-            if self.table_view.columnWidth(col_index) > MAX_COLUMN_WIDTH:
-                self.table_view.setColumnWidth(col_index, MAX_COLUMN_WIDTH)
+            self._cap_column_width(col_index)
+
+    def _cap_column_width(self, col_index: int) -> None:
+        if self.table_view.columnWidth(col_index) > MAX_COLUMN_WIDTH:
+            self.table_view.setColumnWidth(col_index, MAX_COLUMN_WIDTH)
+
+    # --- Current cell, copy, context menu -------------------------------------------
+
+    def current_cell_info(self) -> tuple[str, str]:
+        """(title, full text) of the table's current cell, for the cell preview panel."""
+        index = self.table_view.currentIndex()
+        if not index.isValid():
+            return ("", "")
+        column = str(self.model.headerData(index.column(), Qt.Orientation.Horizontal))
+        return (f"{column} — row {index.row() + 1}", self.model.cell_text(index.row(), index.column()))
+
+    def _emit_current_cell(self, *_args) -> None:
+        self.current_cell_changed.emit(*self.current_cell_info())
+
+    def copy_selection(self) -> None:
+        """Copy the selected cells to the clipboard as tab-separated text (pastes
+        straight into Excel), using the full values — not the elided/collapsed
+        text drawn in the grid. Hidden columns are skipped."""
+        indexes = [
+            i for i in self.table_view.selectionModel().selectedIndexes()
+            if not self.table_view.isColumnHidden(i.column())
+        ]
+        if not indexes:
+            return
+        rows = sorted({i.row() for i in indexes})
+        cols = sorted({i.column() for i in indexes})
+        selected = {(i.row(), i.column()) for i in indexes}
+        lines = []
+        for r in rows:
+            fields = [_tsv_field(self.model.cell_text(r, c)) if (r, c) in selected else "" for c in cols]
+            lines.append("\t".join(fields))
+        QApplication.clipboard().setText("\n".join(lines))
+
+    def _show_table_context_menu(self, pos) -> None:
+        index = self.table_view.indexAt(pos)
+        menu = QMenu(self)
+        copy_action = menu.addAction("Copy")
+        copy_action.setShortcut(QKeySequence.StandardKey.Copy)
+        copy_action.setEnabled(self.table_view.selectionModel().hasSelection())
+        copy_action.triggered.connect(self.copy_selection)
+        details_action = menu.addAction("Show Row Details...")
+        details_action.setEnabled(index.isValid())
+        details_action.triggered.connect(lambda _checked=False: self._show_row_detail(index))
+        menu.exec(self.table_view.viewport().mapToGlobal(pos))
 
     def _show_row_detail(self, index) -> None:
         """Double-click handler: show the full row as a vertical field list,
@@ -159,8 +237,7 @@ class FileTab(QWidget):
         else:
             row_text = f"{total_rows:,} rows"
         self.info_label.setText(
-            f"<b>{file_name}</b> — sheet '{self.sheet_name}'  "
-            f"({row_text} x {cols:,} columns)"
+            f"{file_name} — sheet '{self.sheet_name}'  ({row_text} x {cols:,} columns)"
         )
 
     def apply_filters(self) -> None:
@@ -182,6 +259,7 @@ class FileTab(QWidget):
         # Re-apply column visibility since beginResetModel/endResetModel from the
         # filter can reset column-hidden flags on some Qt versions.
         self.apply_column_visibility()
+        self._emit_current_cell()  # the model reset cleared the current cell
 
     def open_column_manager(self) -> None:
         dialog = ColumnManagerDialog(self.model.column_names(), self.hidden_columns, self)
@@ -228,9 +306,18 @@ class FileTab(QWidget):
             QMessageBox.warning(self, "Could Not Refresh", str(exc))
 
     def tab_label(self) -> str:
-        """Text shown on the QTabWidget tab itself."""
+        """Full "file [sheet]" name, used in messages and search results."""
         base = os.path.splitext(os.path.basename(self.file_path))[0]
         return f"{base} [{self.sheet_name}]"
+
+    def short_tab_label(self) -> str:
+        """Text shown on the QTabWidget tab itself — shortened so one long
+        name can't fill the whole tab bar (the full name is the tab's tooltip)."""
+        label = self.tab_label()
+        if len(label) <= MAX_TAB_LABEL_CHARS:
+            return label
+        keep = MAX_TAB_LABEL_CHARS - 1
+        return label[: keep - keep // 3] + "…" + label[-(keep // 3):]
 
     @property
     def key(self) -> tuple[str, str]:

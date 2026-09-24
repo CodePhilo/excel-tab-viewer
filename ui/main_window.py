@@ -29,9 +29,12 @@ from PySide6.QtWidgets import (
     QLabel,
     QStackedWidget,
     QMenu,
+    QPlainTextEdit,
 )
 from PySide6.QtGui import QAction
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QSettings
+
+import pandas as pd
 
 from ui.file_tab import FileTab
 from ui.sheet_select_dialog import SheetSelectDialog
@@ -42,13 +45,25 @@ from core import profile_manager
 from core.profile_manager import ProfileError
 
 MAX_GLOBAL_RESULTS_PER_TAB = 100
+MAX_PREVIEW_VALUE_CHARS = 40  # per value in a cross-tab search result line
+DEFAULT_WINDOW_SIZE = (1200, 750)
+
+
+def _preview_value(value) -> str:
+    """One short, single-line rendering of a cell for a search-result line —
+    a long or multi-line cell otherwise made that result row enormous."""
+    if pd.isna(value):
+        return ""
+    text = " ".join(str(value).split())
+    if len(text) > MAX_PREVIEW_VALUE_CHARS:
+        text = text[: MAX_PREVIEW_VALUE_CHARS - 1] + "…"
+    return text
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Excel Tab Viewer")
-        self.resize(1200, 750)
 
         # Tracks every currently open (file_path, sheet_name) -> FileTab widget,
         # so we can prevent duplicate tabs and look up a tab quickly from the sidebar.
@@ -80,11 +95,39 @@ class MainWindow(QMainWindow):
 
         self._build_sidebar()
         self._build_global_search()
+        self._build_cell_preview()
         self._build_menu()
         self._build_profiles_menu()
 
         self.statusBar().showMessage("Ready")
         self._update_central_stack()
+        self._restore_window_layout()
+
+    # --- Window size / layout ------------------------------------------------------
+
+    def _restore_window_layout(self) -> None:
+        """Reopen at the size/position and dock layout the user last left, or —
+        first run, or a saved position that's no longer on any screen — at a
+        size that fits the current screen. (A fixed 1200x750 was taller than the
+        usable area of a 1366x768 laptop, putting the bottom of the window,
+        status bar included, off-screen.)"""
+        settings = QSettings()
+        geometry = settings.value("window/geometry")
+        if geometry is None or not self.restoreGeometry(geometry):
+            available = self.screen().availableGeometry()
+            width = min(DEFAULT_WINDOW_SIZE[0], int(available.width() * 0.9))
+            height = min(DEFAULT_WINDOW_SIZE[1], int(available.height() * 0.9))
+            self.resize(width, height)
+            self.move(available.center() - self.rect().center())
+        state = settings.value("window/state")
+        if state is not None:
+            self.restoreState(state)
+
+    def closeEvent(self, event) -> None:
+        settings = QSettings()
+        settings.setValue("window/geometry", self.saveGeometry())
+        settings.setValue("window/state", self.saveState())
+        super().closeEvent(event)
 
     def _build_empty_state(self) -> QWidget:
         widget = QWidget()
@@ -127,6 +170,7 @@ class MainWindow(QMainWindow):
         self.sidebar_tree.itemClicked.connect(self._on_sidebar_item_clicked)
 
         dock = QDockWidget("Files", self)
+        dock.setObjectName("filesDock")  # saveState()/restoreState() identify docks by name
         dock.setWidget(self.sidebar_tree)
         # DockWidgetClosable is required for toggleViewAction() (used in the View menu)
         # to actually show/hide the dock, not just flip its checkmark.
@@ -198,10 +242,12 @@ class MainWindow(QMainWindow):
             self.tab_widget.setCurrentWidget(tab)
 
     def _on_current_tab_changed(self, index: int) -> None:
-        """Keep the sidebar selection in sync with the active tab."""
+        """Keep the sidebar selection and cell preview in sync with the active tab."""
         tab = self.tab_widget.widget(index)
         if tab is None:
+            self._set_cell_preview("", "")
             return
+        self._set_cell_preview(*tab.current_cell_info())
         for i in range(self.sidebar_tree.topLevelItemCount()):
             file_node = self.sidebar_tree.topLevelItem(i)
             for j in range(file_node.childCount()):
@@ -236,8 +282,12 @@ class MainWindow(QMainWindow):
         view_menu = self.menuBar().addMenu("&View")
         view_menu.addAction(self.sidebar_dock.toggleViewAction())
         view_menu.addAction(self.global_search_dock.toggleViewAction())
+        cell_preview_action = self.cell_preview_dock.toggleViewAction()
+        cell_preview_action.setShortcut("F3")
+        view_menu.addAction(cell_preview_action)
 
         toolbar = self.addToolBar("Main")
+        toolbar.setObjectName("mainToolbar")
         toolbar.setMovable(False)
         toolbar.addAction(open_action)
         toolbar.addAction(refresh_current_action)
@@ -336,7 +386,11 @@ class MainWindow(QMainWindow):
         if saved_state is not None:
             tab.apply_saved_state(saved_state)
 
-        index = self.tab_widget.addTab(tab, tab.tab_label())
+        tab.current_cell_changed.connect(
+            lambda title, text, t=tab: self._on_tab_cell_changed(t, title, text)
+        )
+        index = self.tab_widget.addTab(tab, tab.short_tab_label())
+        self.tab_widget.setTabToolTip(index, f"{tab.file_path}\nSheet: {tab.sheet_name}")
         self.tab_widget.setCurrentIndex(index)
         self.open_tabs[tab.key] = tab
         self._add_sidebar_entry(tab)
@@ -441,6 +495,7 @@ class MainWindow(QMainWindow):
         self.global_results_tree.itemClicked.connect(self._on_global_result_clicked)
 
         dock = QDockWidget("Cross-Tab Search", self)
+        dock.setObjectName("crossTabSearchDock")
         dock.setWidget(self.global_results_tree)
         dock.setFeatures(
             QDockWidget.DockWidgetMovable
@@ -448,7 +503,48 @@ class MainWindow(QMainWindow):
             | QDockWidget.DockWidgetClosable
         )
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        # Hidden until there are results to show (run_global_search opens it),
+        # so it doesn't take a third of a small screen's width up front.
+        dock.hide()
         self.global_search_dock = dock
+
+    # --- Cell preview ------------------------------------------------------------------
+
+    def _build_cell_preview(self) -> None:
+        """A dock showing the current cell's full value, wrapped and selectable —
+        the grid itself can only show a long value elided to its column width."""
+        self.cell_preview_title = QLabel()
+        self.cell_preview_title.setWordWrap(True)
+        self.cell_preview_title.setStyleSheet("font-weight: 600;")
+        self.cell_preview_text = QPlainTextEdit()
+        self.cell_preview_text.setReadOnly(True)
+        self.cell_preview_text.setPlaceholderText("Select a cell to see its full value here.")
+
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.addWidget(self.cell_preview_title)
+        layout.addWidget(self.cell_preview_text)
+
+        dock = QDockWidget("Cell Preview", self)
+        dock.setObjectName("cellPreviewDock")
+        dock.setWidget(container)
+        dock.setFeatures(
+            QDockWidget.DockWidgetMovable
+            | QDockWidget.DockWidgetFloatable
+            | QDockWidget.DockWidgetClosable
+        )
+        self.addDockWidget(Qt.RightDockWidgetArea, dock)
+        dock.hide()  # opt-in via View > Cell Preview (F3)
+        self.cell_preview_dock = dock
+
+    def _set_cell_preview(self, title: str, text: str) -> None:
+        self.cell_preview_title.setText(title)
+        self.cell_preview_text.setPlainText(text)
+
+    def _on_tab_cell_changed(self, tab: FileTab, title: str, text: str) -> None:
+        if tab is self.tab_widget.currentWidget():
+            self._set_cell_preview(title, text)
 
     def run_global_search(self) -> None:
         text = self.global_search_edit.text().strip()
@@ -482,7 +578,7 @@ class MainWindow(QMainWindow):
             for pos in shown:
                 row = full_df.iloc[pos]
                 row_label = full_df.index[pos]  # the actual pandas index label, used for row lookup on click
-                preview = ", ".join(f"{c}: {row[c]}" for c in preview_columns)
+                preview = ", ".join(f"{_preview_value(c)}: {_preview_value(row[c])}" for c in preview_columns)
                 # +1 so this matches the 1-indexed row numbers shown in the table itself
                 # (position, not the raw pandas index label, which could differ after filtering elsewhere).
                 child = QTreeWidgetItem([f"Row {pos + 1}: {preview}"])

@@ -686,3 +686,10 @@ QDialogButtonBox {
     color: #666d80;
     max-width: 380px;
 }
+
+/* Condition-row scroll area inside the filter group box: no frame of its
+   own (the group box already draws one). */
+#conditionsScroll {
+    border: none;
+    background: transparent;
+}
