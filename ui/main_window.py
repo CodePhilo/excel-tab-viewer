@@ -147,7 +147,15 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(widget)
         layout.addStretch(1)
         layout.addWidget(title)
-        layout.addWidget(subtitle)
+        # The subtitle is width-capped in style.qss, so it needs centering or it
+        # sits off to the left of the title and button. Stretches rather than an
+        # alignment flag: a word-wrapped label given an alignment loses its
+        # height-for-width and gets cut to one line.
+        subtitle_row = QHBoxLayout()
+        subtitle_row.addStretch(1)
+        subtitle_row.addWidget(subtitle)
+        subtitle_row.addStretch(1)
+        layout.addLayout(subtitle_row)
         layout.addSpacing(12)
         layout.addWidget(open_btn, alignment=Qt.AlignmentFlag.AlignCenter)
         layout.addStretch(1)

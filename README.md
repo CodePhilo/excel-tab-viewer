@@ -27,6 +27,11 @@ Built with Python, [PySide6](https://doc.qt.io/qtforpython-6/), and
 - **Row detail view** — double-click any row to see it as a readable
   vertical field list, useful for wide records or cells with embedded line
   breaks.
+- **Cell preview & copy** — View ▸ Cell Preview (F3) shows the selected
+  cell's full value, however long; Ctrl+C (or right-click ▸ Copy) copies
+  selected cells as text that pastes straight into Excel.
+- **Faithful values** — text cells are shown exactly as typed in Excel
+  (`0044`, `+44…` phone numbers, `N/A` stay as they are).
 - **Refresh** — reload any tab (or all tabs) from disk if the source file
   changed, re-applying your filters and column choices.
 - **Profiles** — save the exact set of open files, sheets, columns, and
