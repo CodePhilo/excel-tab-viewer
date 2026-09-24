@@ -107,8 +107,9 @@ class ConditionRow(QWidget):
         self.value2_edit = QLineEdit()
         self.value2_edit.setPlaceholderText("to...")
 
-        self.remove_btn = QPushButton("✕")
-        self.remove_btn.setFixedWidth(28)
+        self.remove_btn = QPushButton()
+        self.remove_btn.setObjectName("smallIconButton")  # icon + compact padding come from style.qss
+        self.remove_btn.setFixedWidth(30)
         self.remove_btn.setToolTip("Remove this condition")
         self.remove_btn.clicked.connect(lambda: self.remove_requested.emit(self))
 

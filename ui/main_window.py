@@ -36,6 +36,7 @@ from PySide6.QtCore import Qt, QSettings
 
 import pandas as pd
 
+from ui.dock_title_bar import DockTitleBar
 from ui.file_tab import FileTab
 from ui.sheet_select_dialog import SheetSelectDialog
 from ui.header_row_dialog import HeaderRowDialog
@@ -179,6 +180,7 @@ class MainWindow(QMainWindow):
             | QDockWidget.DockWidgetFloatable
             | QDockWidget.DockWidgetClosable
         )
+        dock.setTitleBarWidget(DockTitleBar(dock))
         self.addDockWidget(Qt.LeftDockWidgetArea, dock)
         self.sidebar_dock = dock
 
@@ -502,6 +504,7 @@ class MainWindow(QMainWindow):
             | QDockWidget.DockWidgetFloatable
             | QDockWidget.DockWidgetClosable
         )
+        dock.setTitleBarWidget(DockTitleBar(dock))
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
         # Hidden until there are results to show (run_global_search opens it),
         # so it doesn't take a third of a small screen's width up front.
@@ -534,6 +537,7 @@ class MainWindow(QMainWindow):
             | QDockWidget.DockWidgetFloatable
             | QDockWidget.DockWidgetClosable
         )
+        dock.setTitleBarWidget(DockTitleBar(dock))
         self.addDockWidget(Qt.RightDockWidgetArea, dock)
         dock.hide()  # opt-in via View > Cell Preview (F3)
         self.cell_preview_dock = dock

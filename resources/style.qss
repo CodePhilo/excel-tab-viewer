@@ -18,6 +18,11 @@
      Accent Tint       #e6e5fb   introduces a second color.
      Accent Tint Str.  #d2d0f7
 
+   Icons (resources/icons/*.svg): one set on a 16x16 grid, 1.75px
+   rounded strokes, Text Secondary (#666d80) at rest and Accent on
+   hover (*-hover.svg). SVG keeps them sharp at any Windows display
+   scaling; never mix in Fusion's built-in icons or text glyphs.
+
    Signature motif: a 3px accent rule marks "current" — on the
    active tab (top edge) and the active sidebar row (left edge) —
    instead of scattering different highlight treatments per widget.
@@ -191,13 +196,17 @@ QTabBar::tab:hover:!selected {
 }
 
 QTabBar::close-button {
+    image: url(%ICONDIR%/close.svg);
     subcontrol-position: right;
-    padding: 3px;
-    border-radius: 3px;
+    width: 16px;
+    height: 16px;
+    padding: 1px;
+    border-radius: 4px;
 }
 
 QTabBar::close-button:hover {
-    background: #d2d0f7;
+    image: url(%ICONDIR%/close-hover.svg);
+    background: #e6e5fb;
 }
 
 /* Left/right overflow-scroll buttons that appear once tabs no longer fit.
@@ -229,23 +238,31 @@ QTabBar QToolButton:hover {
 }
 
 QTabBar QToolButton::left-arrow {
-    image: url(%ICONDIR%/tab_left.png);
-    width: 8px;
-    height: 12px;
+    image: url(%ICONDIR%/chevron-left.svg);
+    width: 16px;
+    height: 16px;
 }
 
 QTabBar QToolButton::left-arrow:hover {
-    image: url(%ICONDIR%/tab_left_hover.png);
+    image: url(%ICONDIR%/chevron-left-hover.svg);
 }
 
 QTabBar QToolButton::right-arrow {
-    image: url(%ICONDIR%/tab_right.png);
-    width: 8px;
-    height: 12px;
+    image: url(%ICONDIR%/chevron-right.svg);
+    width: 16px;
+    height: 16px;
 }
 
 QTabBar QToolButton::right-arrow:hover {
-    image: url(%ICONDIR%/tab_right_hover.png);
+    image: url(%ICONDIR%/chevron-right-hover.svg);
+}
+
+/* The jagged "tear" Fusion draws where tabs are scrolled out of view —
+   the scroll arrows already say that. */
+QTabBar::tear {
+    width: 0px;
+    border: none;
+    image: none;
 }
 
 QTabBar QToolButton:disabled {
@@ -257,6 +274,8 @@ QTabBar QToolButton:disabled {
 QDockWidget {
     color: #1c2030;
     font-size: 13px;
+    titlebar-close-icon: url(%ICONDIR%/close.svg);
+    titlebar-normal-icon: url(%ICONDIR%/float.svg);
 }
 
 QDockWidget::close-button, QDockWidget::float-button {
@@ -265,8 +284,8 @@ QDockWidget::close-button, QDockWidget::float-button {
     padding: 2px;
     border-radius: 3px;
     icon-size: 16px;
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
 }
 
 QDockWidget::close-button:hover, QDockWidget::float-button:hover {
@@ -279,6 +298,30 @@ QDockWidget::title {
     border-bottom: 1px solid #dde1ea;
     border-left: 3px solid #4a47d6;
     font-weight: 600;
+}
+
+/* Custom dock title bar (ui/dock_title_bar.py) — replaces Qt's built-in
+   one, whose float/close icons ignore icon-size and render at ~8px. */
+#dockTitleBar {
+    background: #f5f6fa;
+    border-bottom: 1px solid #dde1ea;
+    border-left: 3px solid #4a47d6;
+}
+
+#dockTitleLabel {
+    font-weight: 600;
+}
+
+#dockTitleButton {
+    padding: 3px;
+    border-radius: 4px;
+    background: transparent;
+    border: 1px solid transparent;
+}
+
+#dockTitleButton:hover {
+    background: #e6e5fb;
+    border: 1px solid #d2d0f7;
 }
 
 /* --- Trees & lists --------------------------------------------------------- */
@@ -311,11 +354,11 @@ QTreeView::branch {
 }
 
 QTreeView::branch:has-children:closed {
-    image: url(%ICONDIR%/tree_closed.png);
+    image: url(%ICONDIR%/chevron-right.svg);
 }
 
 QTreeView::branch:has-children:open {
-    image: url(%ICONDIR%/tree_open.png);
+    image: url(%ICONDIR%/chevron-down.svg);
 }
 
 QListWidget {
@@ -342,8 +385,21 @@ QListWidget::item:hover:!selected {
 }
 
 QListWidget::indicator {
-    width: 15px;
-    height: 15px;
+    width: 14px;
+    height: 14px;
+    border: 1px solid #a8afc4;
+    border-radius: 4px;
+    background: #ffffff;
+}
+
+QListWidget::indicator:hover {
+    border-color: #4a47d6;
+}
+
+QListWidget::indicator:checked {
+    image: url(%ICONDIR%/check.svg);
+    background: #4a47d6;
+    border-color: #4a47d6;
 }
 
 /* --- Tables ------------------------------------------------------------------ */
@@ -426,18 +482,16 @@ QPushButton:default:pressed {
     background: #33309e;
 }
 
-/* Small square icon-only buttons (e.g. the "✕" remove-condition button)
-   are fixed-width in code — the generic padding above (16px each side)
-   is wider than the whole button, leaving no room for the label at all.
-   Needs `self.remove_btn.setObjectName("smallIconButton")` in filter_bar.py. */
+/* Small square icon-only buttons (e.g. the remove-condition button) are
+   fixed-width in code — the generic padding above (16px each side) is
+   wider than the whole button, leaving no room for the icon at all. */
 #smallIconButton {
     padding: 2px;
-    font-weight: 700;
-    color: #666d80;
+    qproperty-icon: url(%ICONDIR%/close.svg);
+    qproperty-iconSize: 16px 16px;
 }
 
 #smallIconButton:hover {
-    color: #c0392b;
     border-color: #c0392b;
     background: #fdecea;
 }
@@ -491,9 +545,13 @@ QComboBox::drop-down {
 }
 
 QComboBox::down-arrow {
-    image: url(%ICONDIR%/combo_down.png);
-    width: 10px;
-    height: 6px;
+    image: url(%ICONDIR%/chevron-down.svg);
+    width: 16px;
+    height: 16px;
+}
+
+QComboBox::down-arrow:hover {
+    image: url(%ICONDIR%/chevron-down-hover.svg);
 }
 
 QComboBox QAbstractItemView {
@@ -554,23 +612,23 @@ QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
 }
 
 QSpinBox::up-arrow {
-    image: url(%ICONDIR%/spin_up.png);
-    width: 9px;
-    height: 6px;
+    image: url(%ICONDIR%/chevron-up.svg);
+    width: 12px;
+    height: 12px;
 }
 
 QSpinBox::up-arrow:hover {
-    image: url(%ICONDIR%/spin_up_hover.png);
+    image: url(%ICONDIR%/chevron-up-hover.svg);
 }
 
 QSpinBox::down-arrow {
-    image: url(%ICONDIR%/spin_down.png);
-    width: 9px;
-    height: 6px;
+    image: url(%ICONDIR%/chevron-down.svg);
+    width: 12px;
+    height: 12px;
 }
 
 QSpinBox::down-arrow:hover {
-    image: url(%ICONDIR%/spin_down_hover.png);
+    image: url(%ICONDIR%/chevron-down-hover.svg);
 }
 
 QPlainTextEdit {

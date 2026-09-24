@@ -104,17 +104,18 @@ doesn't, this is almost always why — add that package to the
 `hidden_imports` list in `excel_tab_viewer.spec` the same way, or add its
 name to `hiddenimports=[...]` directly if `collect_submodules` doesn't apply.
 
-## 6. Adding an icon (optional)
+## 6. Icons
 
-Drop an `.ico` file at `resources/app.ico`, then uncomment this line in
-`excel_tab_viewer.spec`:
+All UI icons are SVGs in `resources/icons/` (the spec bundles the whole
+folder — style.qss loads them at runtime). The app icon is
+`resources/icons/app.svg`; the `.exe` itself needs an `.ico`, which is
+generated from it and checked in as `resources/icons/app.ico`. After
+editing `app.svg`, regenerate the `.ico` and rebuild:
 
-```python
-# icon="resources/app.ico",
+```powershell
+python resources/make_app_ico.py
+pyinstaller excel_tab_viewer.spec
 ```
-
-and rebuild. (PySide6/Qt can only use `.ico` for the Windows taskbar/title
-bar icon — PNG/SVG won't work here.)
 
 ## 7. Rebuilding after code changes
 

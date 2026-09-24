@@ -11,6 +11,7 @@ import os
 import sys
 import traceback
 
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from ui.main_window import MainWindow
@@ -70,6 +71,19 @@ def _load_stylesheet(app: QApplication) -> None:
         pass  # a missing/unreadable stylesheet shouldn't stop the app from launching
 
 
+def _set_app_icon(app: QApplication) -> None:
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "icons", "app.svg")
+    app.setWindowIcon(QIcon(icon_path))
+    if sys.platform == "win32":
+        # Without an explicit AppUserModelID, Windows groups the window under
+        # python.exe when run from source and shows Python's taskbar icon.
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("CodePhilo.ExcelTabViewer")
+        except (AttributeError, OSError):
+            pass
+
+
 def main() -> None:
     _install_exception_hook()
 
@@ -79,6 +93,7 @@ def main() -> None:
     app.setStyle("Fusion")  # native styles ignore custom QSS sub-controls (icons,
                              # checkboxes, arrows) — Fusion respects them fully
     _load_stylesheet(app)
+    _set_app_icon(app)
 
     window = MainWindow()
     window.show()

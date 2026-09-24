@@ -36,6 +36,9 @@ hidden_imports = (
 # needs to be listed here explicitly, or it won't be in the bundled folder.
 datas = [
     ("resources/style.qss", "resources"),
+    # style.qss and main.py load these at runtime; without them the packaged
+    # app drew no combo/spin/tab/tree arrows at all.
+    ("resources/icons", "resources/icons"),
 ]
 
 a = Analysis(
@@ -74,7 +77,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    # icon="resources/app.ico",  # uncomment and point at an .ico file if you add one
+    icon="resources/icons/app.ico",  # rebuild with: python resources/make_app_ico.py
 )
 
 # COLLECT produces a folder (one-dir build): ExcelTabViewer.exe plus its
