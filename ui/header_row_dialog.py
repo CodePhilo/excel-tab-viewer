@@ -60,7 +60,7 @@ class HeaderRowDialog(QDialog):
         self.table = QTableWidget()
         self.table.setColumnCount(len(preview_df.columns))
         self.table.setRowCount(len(preview_df))
-        self.table.setHorizontalHeaderLabels([f"Col {i + 1}" for i in range(len(preview_df.columns))])
+        self.table.setHorizontalHeaderLabels([str(c) for c in preview_df.columns])  # Excel column letters
         self.table.setVerticalHeaderLabels([str(i + 1) for i in range(len(preview_df))])
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
