@@ -37,6 +37,16 @@ Built with Python, [PySide6](https://doc.qt.io/qtforpython-6/), and
 - **Profiles** — save the exact set of open files, sheets, columns, and
   filters under a name, and reopen that whole setup in one click. Handles
   moved/renamed source files by prompting you to relocate them.
+- **Open files by name pattern** — File ▸ Open Files by Name Pattern
+  (Ctrl+Shift+O) opens every Excel file in a folder whose name begins with,
+  ends with, contains, doesn't contain, or matches a `*`/`?` pattern — any
+  number of conditions, all or any of them. Saved in a profile, the rule is
+  checked again each time the profile loads (and on Refresh All), so new
+  files such as the latest daily report open automatically. Manage a
+  session's rules under Profiles ▸ Folder Rules.
+- **Sparse sheets load fast** — a stray value far out to the right (say in
+  column XFD) no longer makes the app load thousands of empty columns;
+  columns with no header and no data are left out.
 - **Packaged as a standalone Windows `.exe`** — no Python install required
   for end users (see [Building the `.exe`](#building-the-exe) below).
 

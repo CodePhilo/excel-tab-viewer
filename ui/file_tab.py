@@ -83,6 +83,9 @@ class FileTab(QWidget):
         # here so Refresh and profile saves reuse the same choice the user made
         # when opening the file, rather than re-defaulting to row 1.
         self.header_row = header_row
+        # The FolderRule that opened this tab (set by MainWindow), or None for
+        # a file opened directly. Profiles save such tabs under their rule.
+        self.folder_rule = None
 
         # Column names the user has hidden in this tab, by name (not index) so
         # visibility survives a Refresh even if column order/count shifts slightly.

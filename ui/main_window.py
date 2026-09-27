@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
     QStackedWidget,
     QMenu,
     QPlainTextEdit,
+    QApplication,
 )
 from PySide6.QtGui import QAction
 from PySide6.QtCore import Qt, QSettings
@@ -38,8 +39,10 @@ from ui.dock_title_bar import DockTitleBar
 from ui.file_tab import FileTab
 from ui.sheet_select_dialog import SheetSelectDialog
 from ui.header_row_dialog import HeaderRowDialog
+from ui.folder_rule_dialog import FolderRuleDialog, FolderRulesDialog
 from core.excel_loader import list_sheet_names, load_sheet_preview, ExcelLoadError
 from core.filters import compile_quick_search
+from core.folder_rules import FolderRule
 from core.formatting import display_text
 from core import profile_manager
 from core.profile_manager import ProfileError
@@ -58,6 +61,14 @@ def _preview_value(value) -> str:
     return text
 
 
+def _norm_key(key: tuple[str, str]) -> tuple[str, str]:
+    """(path, sheet) with the path normalized, so 'C:/a/b.xlsx' (as the file
+    dialog returns it) and 'C:\\A\\b.xlsx' (as a folder scan finds it) are
+    recognized as the same file."""
+    path, sheet_name = key
+    return (os.path.normcase(os.path.normpath(path)), sheet_name)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -71,6 +82,10 @@ class MainWindow(QMainWindow):
         # highlight, so clicking a new result can clear the previous one —
         # only one row is ever highlighted across the whole app at a time.
         self._highlighted_tab: FileTab | None = None
+
+        # Folder rules active in this session (File > Open Files by Name
+        # Pattern, or a loaded profile's). Saved with the next profile save.
+        self.folder_rules: list[FolderRule] = []
 
         self.tab_widget = QTabWidget()
         self.tab_widget.setTabsClosable(True)
@@ -144,6 +159,9 @@ class MainWindow(QMainWindow):
         open_btn.setObjectName("emptyStateButton")
         open_btn.clicked.connect(self.open_files_dialog)
 
+        pattern_btn = QPushButton("Open Files by Name Pattern...")
+        pattern_btn.clicked.connect(self.open_files_by_pattern)
+
         layout = QVBoxLayout(widget)
         layout.addStretch(1)
         layout.addWidget(title)
@@ -158,6 +176,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(subtitle_row)
         layout.addSpacing(12)
         layout.addWidget(open_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(pattern_btn, alignment=Qt.AlignmentFlag.AlignCenter)
         layout.addStretch(1)
         return widget
 
@@ -273,6 +292,11 @@ class MainWindow(QMainWindow):
         open_action.triggered.connect(self.open_files_dialog)
         file_menu.addAction(open_action)
 
+        pattern_action = QAction("Open Files by &Name Pattern...", self)
+        pattern_action.setShortcut("Ctrl+Shift+O")
+        pattern_action.triggered.connect(self.open_files_by_pattern)
+        file_menu.addAction(pattern_action)
+
         file_menu.addSeparator()
 
         refresh_current_action = QAction("Refresh Current Tab", self)
@@ -383,12 +407,18 @@ class MainWindow(QMainWindow):
         sheet_name: str,
         header_row: int = 0,
         saved_state: dict | None = None,
-    ) -> None:
+        errors: list[str] | None = None,
+    ) -> FileTab | None:
+        """Open one sheet as a new tab. A load failure is shown right away, or
+        — when `errors` is given — appended to it, for opening many at once."""
         try:
             tab = FileTab(path, sheet_name, header_row=header_row)
         except ExcelLoadError as exc:
-            self._show_load_error(exc)
-            return
+            if errors is None:
+                self._show_load_error(exc)
+            else:
+                errors.append(str(exc))
+            return None
 
         if saved_state is not None:
             tab.apply_saved_state(saved_state)
@@ -409,11 +439,14 @@ class MainWindow(QMainWindow):
             f"Loaded '{os.path.basename(path)}' [{sheet_name}] — {rows:,} rows x {cols:,} columns",
             5000,
         )
+        return tab
 
     def _close_tab(self, index: int) -> None:
         widget = self.tab_widget.widget(index)
         self.tab_widget.removeTab(index)
         if widget is not None:
+            if widget.folder_rule is not None:
+                widget.folder_rule.dismissed.add(_norm_key(widget.key))
             self.open_tabs.pop(widget.key, None)
             self._remove_sidebar_entry(widget)
             if self._highlighted_tab is widget:
@@ -438,8 +471,126 @@ class MainWindow(QMainWindow):
         menu.exec(self.tab_widget.mapToGlobal(pos))
 
     def _close_all_tabs(self) -> None:
+        """Close every tab and start over: the session's folder rules go too,
+        so they aren't saved into the next profile."""
         while self.tab_widget.count() > 0:
             self._close_tab(0)
+        self.folder_rules.clear()
+
+    # --- Folder rules (open files by name pattern) -------------------------------------
+
+    def _is_open(self, path: str, sheet_name: str) -> bool:
+        key = _norm_key((path, sheet_name))
+        return any(_norm_key(k) == key for k in self.open_tabs)
+
+    def _open_rule_files(
+        self, rule: FolderRule, errors: list[str], saved_states: dict | None = None
+    ) -> int:
+        """Open every matching (file, sheet) of `rule` that isn't open yet and
+        wasn't closed by the user this session. Returns how many were opened."""
+        try:
+            paths = rule.find_files()
+        except OSError as exc:
+            errors.append(f"{rule.describe()}\n{exc}")
+            return 0
+
+        opened = 0
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            for path in paths:
+                try:
+                    sheet_names = list_sheet_names(path)
+                except ExcelLoadError as exc:
+                    errors.append(str(exc))
+                    continue
+                for sheet_name in rule.pick_sheets(sheet_names):
+                    key = _norm_key((path, sheet_name))
+                    if key in rule.dismissed or self._is_open(path, sheet_name):
+                        continue
+                    state = (saved_states or {}).get(key)
+                    header_row = state.get("header_row", rule.header_row) if state else rule.header_row
+                    tab = self._open_sheet_tab(
+                        path, sheet_name, header_row=header_row, saved_state=state, errors=errors
+                    )
+                    if tab is not None:
+                        tab.folder_rule = rule
+                        opened += 1
+        finally:
+            QApplication.restoreOverrideCursor()
+        return opened
+
+    def _show_rule_errors(self, errors: list[str]) -> None:
+        if errors:
+            QMessageBox.warning(self, "Some Files Could Not Be Opened", "\n\n".join(errors))
+
+    def open_files_by_pattern(self) -> None:
+        dialog = FolderRuleDialog(parent=self)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        self._add_folder_rule(dialog.rule())
+
+    def _add_folder_rule(self, rule: FolderRule) -> None:
+        self.folder_rules.append(rule)
+        errors: list[str] = []
+        opened = self._open_rule_files(rule, errors)
+        self._show_rule_errors(errors)
+        self.statusBar().showMessage(
+            f"{opened} sheet(s) opened from {rule.folder}. "
+            "Save a profile to keep this rule.",
+            6000,
+        )
+
+    def manage_folder_rules(self) -> None:
+        dialog = FolderRulesDialog(self.folder_rules, self)
+
+        def add() -> None:
+            rule_dialog = FolderRuleDialog(parent=dialog)
+            if rule_dialog.exec() == rule_dialog.DialogCode.Accepted:
+                self._add_folder_rule(rule_dialog.rule())
+                dialog.set_rules(self.folder_rules)
+
+        def edit(index: int) -> None:
+            old = self.folder_rules[index]
+            rule_dialog = FolderRuleDialog(old, ok_text="Save", parent=dialog)
+            if rule_dialog.exec() != rule_dialog.DialogCode.Accepted:
+                return
+            new = rule_dialog.rule()
+            self.folder_rules[index] = new
+            for tab in self.open_tabs.values():
+                if tab.folder_rule is old:
+                    tab.folder_rule = new
+            errors: list[str] = []
+            opened = self._open_rule_files(new, errors)
+            self._show_rule_errors(errors)
+            self.statusBar().showMessage(f"Rule updated — {opened} more sheet(s) opened", 5000)
+            dialog.set_rules(self.folder_rules)
+
+        def remove(index: int) -> None:
+            rule = self.folder_rules[index]
+            tabs = [t for t in self.open_tabs.values() if t.folder_rule is rule]
+            close_tabs = False
+            if tabs:
+                reply = QMessageBox.question(
+                    dialog,
+                    "Remove Folder Rule",
+                    f"Also close the {len(tabs)} tab(s) this rule opened?\n\n"
+                    "Choose No to keep them open as regular files.",
+                    QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                )
+                if reply == QMessageBox.Cancel:
+                    return
+                close_tabs = reply == QMessageBox.Yes
+            del self.folder_rules[index]
+            for tab in tabs:
+                tab.folder_rule = None
+                if close_tabs:
+                    self._close_tab(self.tab_widget.indexOf(tab))
+            dialog.set_rules(self.folder_rules)
+
+        dialog.add_requested.connect(add)
+        dialog.edit_requested.connect(edit)
+        dialog.remove_requested.connect(remove)
+        dialog.exec()
 
     # --- Refresh ---------------------------------------------------------------------
 
@@ -455,7 +606,7 @@ class MainWindow(QMainWindow):
         """Reload every open tab from disk. Continues past individual failures
         (e.g. one file moved or locked) and reports them together at the end,
         rather than stopping at the first error."""
-        if self.tab_widget.count() == 0:
+        if self.tab_widget.count() == 0 and not self.folder_rules:
             self.statusBar().showMessage("No tabs open to refresh", 4000)
             return
 
@@ -469,6 +620,10 @@ class MainWindow(QMainWindow):
             else:
                 succeeded += 1
                 self._update_sidebar_entry(tab)
+        refresh_failures = len(errors)
+
+        # Folder rules pick up files that have appeared since they were checked.
+        new_tabs = sum(self._open_rule_files(rule, errors) for rule in self.folder_rules)
 
         if errors:
             QMessageBox.warning(
@@ -476,9 +631,10 @@ class MainWindow(QMainWindow):
                 "Some Files Could Not Be Refreshed",
                 "\n\n".join(errors),
             )
-        self.statusBar().showMessage(
-            f"Refreshed {succeeded} of {succeeded + len(errors)} tabs", 5000
-        )
+        message = f"Refreshed {succeeded} of {succeeded + refresh_failures} tabs"
+        if new_tabs:
+            message += f"; {new_tabs} new matching sheet(s) opened"
+        self.statusBar().showMessage(message, 5000)
 
     # --- Cross-tab global search (Step 7) -------------------------------------------
 
@@ -674,6 +830,12 @@ class MainWindow(QMainWindow):
 
         self.profiles_menu.addSeparator()
 
+        folder_rules_action = QAction("Folder Rules...", self)
+        folder_rules_action.triggered.connect(self.manage_folder_rules)
+        self.profiles_menu.addAction(folder_rules_action)
+
+        self.profiles_menu.addSeparator()
+
         self.rename_profile_action = QAction("Rename Profile...", self)
         self.rename_profile_action.triggered.connect(self.rename_profile_dialog)
         self.profiles_menu.addAction(self.rename_profile_action)
@@ -712,16 +874,27 @@ class MainWindow(QMainWindow):
         self.delete_profile_action.setEnabled(bool(names))
 
     def _collect_current_state(self) -> dict:
-        """Build the saveable state for every currently open tab, in tab order."""
+        """Build the saveable state for every currently open tab, in tab order.
+        Tabs opened by a folder rule are saved under that rule instead, so the
+        rule (not a fixed file list) decides what opens next time."""
         files = []
+        rule_states: dict[int, list[dict]] = {id(rule): [] for rule in self.folder_rules}
         for i in range(self.tab_widget.count()):
             tab = self.tab_widget.widget(i)
-            files.append(tab.get_saved_state())
-        return {"files": files}
+            if tab.folder_rule is not None and id(tab.folder_rule) in rule_states:
+                rule_states[id(tab.folder_rule)].append(tab.get_saved_state())
+            else:
+                files.append(tab.get_saved_state())
+        folder_rules = [
+            {**rule.to_dict(), "tab_states": rule_states[id(rule)]} for rule in self.folder_rules
+        ]
+        return {"files": files, "folder_rules": folder_rules}
 
     def save_profile_as(self) -> None:
-        if self.tab_widget.count() == 0:
-            QMessageBox.information(self, "Nothing to Save", "Open at least one file before saving a profile.")
+        if self.tab_widget.count() == 0 and not self.folder_rules:
+            QMessageBox.information(
+                self, "Nothing to Save", "Open at least one file or add a folder rule before saving a profile."
+            )
             return
 
         name, ok = QInputDialog.getText(self, "Save Profile As", "Profile name:")
@@ -794,6 +967,22 @@ class MainWindow(QMainWindow):
                 path, sheet_name, header_row=entry.get("header_row", 0), saved_state=entry
             )
             opened += 1
+
+        errors: list[str] = []
+        for rule_dict in state.get("folder_rules", []):
+            rule = FolderRule.from_dict(rule_dict)
+            existing = next((r for r in self.folder_rules if r == rule), None)
+            if existing is not None:
+                rule = existing
+                rule.dismissed.clear()  # loading the profile again means "open them all"
+            else:
+                self.folder_rules.append(rule)
+            saved_states = {
+                _norm_key((s.get("path", ""), s.get("sheet_name", ""))): s
+                for s in rule_dict.get("tab_states", [])
+            }
+            opened += self._open_rule_files(rule, errors, saved_states)
+        self._show_rule_errors(errors)
 
         self.statusBar().showMessage(f"Profile '{name}' loaded — {opened} file(s) opened", 5000)
 
