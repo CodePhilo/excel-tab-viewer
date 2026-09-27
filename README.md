@@ -47,8 +47,60 @@ Built with Python, [PySide6](https://doc.qt.io/qtforpython-6/), and
 - **Sparse sheets load fast** — a stray value far out to the right (say in
   column XFD) no longer makes the app load thousands of empty columns;
   columns with no header and no data are left out.
+- **Sorting** — right-click a column header to sort (A to Z, smallest to
+  largest, oldest to newest, and back), then add more columns with "Then
+  by" to break ties. Blanks always go last. Sorting works together with
+  filters, and survives Refresh and profiles.
+- **Export what you see** — File ▸ Export Current View (Ctrl+E) or the
+  tab's Export button saves the filtered, sorted rows and visible columns
+  as a new `.xlsx` or `.csv` file. The source file is never changed.
+- **Selection summary** — select cells (or click a column header) to see
+  Count, Sum, Average, Min and Max in the status bar, as in Excel.
 - **Packaged as a standalone Windows `.exe`** — no Python install required
   for end users (see [Building the `.exe`](#building-the-exe) below).
+
+## Screenshots
+
+**Sorting** — right-click a header; arrows and numbers show the sort order.
+
+![Sorting by Region, then by Total](docs/screenshots/sorting.png)
+
+**Selection summary** — Count, Sum, Average, Min and Max of the selected
+cells, bottom right.
+
+![Selection summary in the status bar](docs/screenshots/selection-summary.png)
+
+**Export** — only the rows and columns on screen (here: pending orders,
+largest first, two columns hidden) go into the new file.
+
+![Exporting the current view](docs/screenshots/export.png)
+
+**Open files by name pattern** — every file in a folder whose name matches.
+
+![Open Files by Name Pattern dialog](docs/screenshots/name-pattern.png)
+
+**Header-row picker** — for sheets with title rows above the real header.
+
+![Choosing the header row](docs/screenshots/header-row.png)
+
+## Try it with the demo files
+
+The [`demo/`](demo/) folder has sample workbooks for trying every feature
+without your own data: monthly `Sales_2026-01/02/03.xlsx` reports (for
+name patterns, sorting, totals and export), `Customers.xlsx` (two sheets,
+multi-line notes), and `Inventory_Report.xlsx` (title rows above the
+header and a stray value in column XFD). Rebuild them any time with:
+
+```powershell
+python demo/make_demo_files.py
+```
+
+The screenshots above are rendered from these files, so they can be
+regenerated after any UI change with:
+
+```powershell
+python tools/make_screenshots.py
+```
 
 ## Requirements
 
@@ -90,8 +142,11 @@ excel-tab-viewer/
 ├── PACKAGING.md                # how to build the .exe
 ├── ui/                          # windows, dialogs, tab/filter widgets
 ├── models/                      # the pandas-backed Qt table model
-├── core/                        # Excel loading, filter logic, profile storage
-└── resources/                   # stylesheet + icons
+├── core/                        # Excel loading, filters, sorting, export, profiles
+├── resources/                   # stylesheet + icons
+├── demo/                        # sample workbooks + the script that makes them
+├── tools/                       # screenshot generator
+└── docs/screenshots/            # README pictures
 ```
 
 ## License
