@@ -47,7 +47,9 @@ ALL_COLUMNS_LABEL = "All Columns"
 MAX_DROPDOWN_UNIQUE_VALUES = 200  # avoid populating a combo with huge unique sets
 MAX_COMBO_WIDTH = 260  # px; long column names / values are elided instead of widening the window
 MAX_CONDITIONS_HEIGHT = 130  # px; about three condition rows, then the list scrolls
-FILTERS_VISIBLE_SETTING = "filters/visible"
+# Renamed from "filters/visible": that key was saved as True on every start,
+# so older installs would never pick up the new hidden-by-default.
+FILTERS_VISIBLE_SETTING = "filters/panel_visible"
 
 
 def _bound_combo(combo: QComboBox, min_chars: int = 8) -> None:
@@ -290,9 +292,13 @@ class FilterBar(QWidget):
 
         self.add_condition_row()  # start with one empty row for convenience
 
-        visible = QSettings().value(FILTERS_VISIBLE_SETTING, True, type=bool)
+        # Hidden by default, leaving the table more room; the user's own
+        # Show/Hide choice is remembered from then on.
+        visible = QSettings().value(FILTERS_VISIBLE_SETTING, False, type=bool)
+        self.toggle_filters_btn.blockSignals(True)  # restoring the choice isn't a new choice to save
         self.toggle_filters_btn.setChecked(visible)
-        self._set_filters_visible(visible)
+        self.toggle_filters_btn.blockSignals(False)
+        self._show_filters(visible)
         self.filters_changed.connect(self._update_toggle_label)
 
     # --- Quick search --------------------------------------------------------------
@@ -311,8 +317,12 @@ class FilterBar(QWidget):
     # --- Show/hide the condition panel ------------------------------------------------
 
     def _set_filters_visible(self, visible: bool) -> None:
-        self.conditions_group.setVisible(visible)
+        """The user clicked Show/Hide Filters."""
+        self._show_filters(visible)
         QSettings().setValue(FILTERS_VISIBLE_SETTING, visible)
+
+    def _show_filters(self, visible: bool) -> None:
+        self.conditions_group.setVisible(visible)
         self._update_toggle_label()
 
     def _update_toggle_label(self) -> None:
@@ -406,8 +416,9 @@ class FilterBar(QWidget):
 
         if not conditions:
             self.add_condition_row()  # keep one empty row for convenience
-            return
-
         for cond in conditions:
             self.add_condition_row()
             self._condition_rows[-1].set_from_condition(cond)
+        # With the panel hidden, "Show Filters (n)" is the only sign that a
+        # loaded profile brought filters with it.
+        self._update_toggle_label()

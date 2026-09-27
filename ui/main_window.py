@@ -112,6 +112,10 @@ class MainWindow(QMainWindow):
         self._build_menu()
         self._build_profiles_menu()
 
+        # Excel-style Count / Sum / Average of the selected cells, at the right.
+        self.selection_summary_label = QLabel()
+        self.statusBar().addPermanentWidget(self.selection_summary_label)
+
         self.statusBar().showMessage("Ready")
         self._update_central_stack()
         self._restore_window_layout()
@@ -272,8 +276,10 @@ class MainWindow(QMainWindow):
         tab = self.tab_widget.widget(index)
         if tab is None:
             self._set_cell_preview("", "")
+            self.selection_summary_label.setText("")
             return
         self._set_cell_preview(*tab.current_cell_info())
+        self.selection_summary_label.setText(tab.selection_summary())
         for i in range(self.sidebar_tree.topLevelItemCount()):
             file_node = self.sidebar_tree.topLevelItem(i)
             for j in range(file_node.childCount()):
@@ -296,6 +302,13 @@ class MainWindow(QMainWindow):
         pattern_action.setShortcut("Ctrl+Shift+O")
         pattern_action.triggered.connect(self.open_files_by_pattern)
         file_menu.addAction(pattern_action)
+
+        file_menu.addSeparator()
+
+        export_action = QAction("&Export Current View...", self)
+        export_action.setShortcut("Ctrl+E")
+        export_action.triggered.connect(self.export_current_view)
+        file_menu.addAction(export_action)
 
         file_menu.addSeparator()
 
@@ -425,6 +438,10 @@ class MainWindow(QMainWindow):
 
         tab.current_cell_changed.connect(
             lambda title, text, t=tab: self._on_tab_cell_changed(t, title, text)
+        )
+        tab.selection_summary_changed.connect(
+            lambda text, t=tab: self.selection_summary_label.setText(text)
+            if t is self.tab_widget.currentWidget() else None
         )
         index = self.tab_widget.addTab(tab, tab.short_tab_label())
         self.tab_widget.setTabToolTip(index, f"{tab.file_path}\nSheet: {tab.sheet_name}")
@@ -591,6 +608,13 @@ class MainWindow(QMainWindow):
         dialog.edit_requested.connect(edit)
         dialog.remove_requested.connect(remove)
         dialog.exec()
+
+    def export_current_view(self) -> None:
+        tab = self.tab_widget.currentWidget()
+        if tab is None:
+            self.statusBar().showMessage("Open a file first", 4000)
+            return
+        tab.export_view()
 
     # --- Refresh ---------------------------------------------------------------------
 

@@ -28,12 +28,16 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QApplication,
     QMenu,
+    QFileDialog,
 )
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, Signal, QSettings, QTimer, QUrl
+from PySide6.QtGui import QColor, QKeySequence, QShortcut, QDesktopServices
+from pandas.api.types import is_datetime64_any_dtype, is_numeric_dtype
 
 from models.table_model import ExcelTableModel
 from core.excel_loader import load_sheet, ExcelLoadError
+from core.exporter import export_frame, ExportError
+from core.selection_summary import summarize
 from core.filters import compile_conditions, compile_quick_search, FilterCondition
 from ui.column_manager_dialog import ColumnManagerDialog
 from ui.elided_label import ElidedLabel
@@ -43,6 +47,9 @@ from ui.row_detail_dialog import RowDetailDialog
 MAX_COLUMN_WIDTH = 320  # px; wide cells (e.g. multi-line text) get elided rather than stretching the column
 MAX_TAB_LABEL_CHARS = 40  # longer file/sheet names are shortened on the tab itself (full name in its tooltip)
 ROW_HIGHLIGHT_COLOR = QColor("#ffe58a")
+SELECTION_SUMMARY_DEBOUNCE_MS = 120
+EXPORT_DIR_SETTING = "export/last_dir"
+INVALID_FILENAME_CHARS = '<>:"/\\|?*'
 
 
 def _tsv_field(text: str) -> str:
@@ -74,6 +81,8 @@ class _RowHighlightDelegate(QStyledItemDelegate):
 class FileTab(QWidget):
     # (title, full text) of the table's current cell, or ("", "") when there is none.
     current_cell_changed = Signal(str, str)
+    # Count / Sum / Average / Min / Max of the selected cells, or "".
+    selection_summary_changed = Signal(str)
 
     def __init__(self, file_path: str, sheet_name: str, header_row: int = 0, parent=None):
         super().__init__(parent)
@@ -104,10 +113,15 @@ class FileTab(QWidget):
         self.refresh_btn.setToolTip("Reload this file from disk")
         self.refresh_btn.clicked.connect(self.refresh)
 
+        self.export_btn = QPushButton("Export...")
+        self.export_btn.setToolTip("Save the rows and columns shown here as a new Excel or CSV file")
+        self.export_btn.clicked.connect(self.export_view)
+
         toolbar_row = QHBoxLayout()
         toolbar_row.addWidget(self.info_label, stretch=1)
         toolbar_row.addWidget(self.refresh_btn)
         toolbar_row.addWidget(self.manage_columns_btn)
+        toolbar_row.addWidget(self.export_btn)
 
         self.filter_bar = FilterBar(df)
         self.filter_bar.filters_changed.connect(self.apply_filters)
@@ -139,6 +153,21 @@ class FileTab(QWidget):
         self.table_view.horizontalHeader().sectionHandleDoubleClicked.connect(self._cap_column_width)
         self.table_view.doubleClicked.connect(self._show_row_detail)
         self.table_view.selectionModel().currentChanged.connect(self._emit_current_cell)
+
+        # Selections change on every mouse move while dragging; total them
+        # once the user pauses rather than on each step.
+        self._summary_timer = QTimer(self)
+        self._summary_timer.setSingleShot(True)
+        self._summary_timer.setInterval(SELECTION_SUMMARY_DEBOUNCE_MS)
+        self._summary_timer.timeout.connect(
+            lambda: self.selection_summary_changed.emit(self.selection_summary())
+        )
+        self.table_view.selectionModel().selectionChanged.connect(lambda *_: self._summary_timer.start())
+
+        # Clicking a header selects the column (as in Excel, and so its cells
+        # can be totalled); sorting lives in the header's right-click menu.
+        header.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        header.customContextMenuRequested.connect(self._show_header_context_menu)
 
         copy_shortcut = QShortcut(QKeySequence.StandardKey.Copy, self.table_view)
         copy_shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
@@ -183,7 +212,7 @@ class FileTab(QWidget):
         index = self.table_view.currentIndex()
         if not index.isValid():
             return ("", "")
-        column = str(self.model.headerData(index.column(), Qt.Orientation.Horizontal))
+        column = str(self.model._view_df.columns[index.column()])
         return (f"{column} — row {index.row() + 1}", self.model.cell_text(index.row(), index.column()))
 
     def _emit_current_cell(self, *_args) -> None:
@@ -220,6 +249,124 @@ class FileTab(QWidget):
         details_action.triggered.connect(lambda _checked=False: self._show_row_detail(index))
         menu.exec(self.table_view.viewport().mapToGlobal(pos))
 
+    # --- Sorting -------------------------------------------------------------------------
+
+    def _show_header_context_menu(self, pos) -> None:
+        header = self.table_view.horizontalHeader()
+        section = header.logicalIndexAt(pos)
+        if section < 0:
+            return
+        column = str(self.model._view_df.columns[section])
+        series = self.model._full_df[column]
+        if is_datetime64_any_dtype(series):
+            up, down = "Oldest to Newest", "Newest to Oldest"
+        elif is_numeric_dtype(series):
+            up, down = "Smallest to Largest", "Largest to Smallest"
+        else:
+            up, down = "A to Z", "Z to A"
+
+        keys = self.model.sort_keys()
+        others = [k for k in keys if k[0] != column]
+        menu = QMenu(self)
+        menu.addAction(f"Sort {up}").triggered.connect(lambda: self.set_sort([(column, True)]))
+        menu.addAction(f"Sort {down}").triggered.connect(lambda: self.set_sort([(column, False)]))
+        # "Then by" adds this column as a tie-breaker after the current sort.
+        then_up = menu.addAction(f"Then by {up}")
+        then_up.triggered.connect(lambda: self.set_sort(others + [(column, True)]))
+        then_down = menu.addAction(f"Then by {down}")
+        then_down.triggered.connect(lambda: self.set_sort(others + [(column, False)]))
+        then_up.setEnabled(bool(others))
+        then_down.setEnabled(bool(others))
+        menu.addSeparator()
+        clear = menu.addAction("Clear Sort (file order)")
+        clear.setEnabled(bool(keys))
+        clear.triggered.connect(lambda: self.set_sort([]))
+        menu.exec(header.mapToGlobal(pos))
+
+    def set_sort(self, keys: list[tuple[str, bool]]) -> None:
+        self.highlighted_row = None  # row positions are about to change; a stale mark would be wrong
+        self.model.set_sort(keys)
+        self._fit_sorted_headers()
+        self._update_info_label()
+        self.apply_column_visibility()  # a model reset can drop column-hidden flags
+        self._emit_current_cell()
+        self._summary_timer.start()
+
+    def _fit_sorted_headers(self) -> None:
+        """Widen sorted columns just enough for their '▲1 Name' header — a
+        column sized to short values otherwise showed only '▲1 R…'. Never
+        narrows a column, and stays within MAX_COLUMN_WIDTH."""
+        metrics = self.table_view.horizontalHeader().fontMetrics()
+        names = self.model.column_names()
+        for column, _ascending in self.model.sort_keys():
+            index = names.index(column)
+            text = str(self.model.headerData(index, Qt.Orientation.Horizontal))
+            needed = min(metrics.horizontalAdvance(text) + 32, MAX_COLUMN_WIDTH)
+            if self.table_view.columnWidth(index) < needed:
+                self.table_view.setColumnWidth(index, needed)
+
+    # --- Export ---------------------------------------------------------------------------
+
+    def export_view(self) -> None:
+        """Save what's on screen — filtered rows, sort order, visible columns —
+        as a new .xlsx or .csv file. The source file is never changed."""
+        df = self.model.visible_frame(self.hidden_columns)
+        if len(df.columns) == 0:
+            QMessageBox.information(self, "Nothing to Export", "All columns are hidden.")
+            return
+
+        settings = QSettings()
+        folder = settings.value(EXPORT_DIR_SETTING, os.path.dirname(self.file_path))
+        stem = os.path.splitext(os.path.basename(self.file_path))[0]
+        name = f"{stem} - {self.sheet_name}" + (" (filtered)" if self.model.is_filtered() else "")
+        name = "".join("_" if ch in INVALID_FILENAME_CHARS else ch for ch in name)
+        path, chosen_filter = QFileDialog.getSaveFileName(
+            self,
+            "Export Current View",
+            os.path.join(folder, name + ".xlsx"),
+            "Excel Workbook (*.xlsx);;CSV UTF-8 (*.csv)",
+        )
+        if not path:
+            return
+        if not path.lower().endswith((".xlsx", ".csv")):
+            path += ".csv" if "csv" in chosen_filter.lower() else ".xlsx"
+        settings.setValue(EXPORT_DIR_SETTING, os.path.dirname(path))
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            export_frame(df, path, self.sheet_name)
+        except ExportError as exc:
+            QApplication.restoreOverrideCursor()
+            QMessageBox.warning(self, "Could Not Export", str(exc))
+            return
+        QApplication.restoreOverrideCursor()
+
+        reply = QMessageBox.question(
+            self,
+            "Export Complete",
+            f"Saved {len(df):,} rows x {len(df.columns):,} columns to:\n{path}\n\nOpen it now?",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            QDesktopServices.openUrl(QUrl.fromLocalFile(path))
+
+    # --- Selection summary ---------------------------------------------------------------
+
+    def selection_summary(self) -> str:
+        """Count / Sum / Average / Min / Max of the selected cells (hidden
+        columns left out), worked out from the selection's rectangles rather
+        than cell by cell, so selecting a whole column stays fast."""
+        df = self.model._view_df
+        blocks = []
+        for block in self.table_view.selectionModel().selection():
+            cols = [
+                c for c in range(block.left(), block.right() + 1)
+                if not self.table_view.isColumnHidden(c)
+            ]
+            if cols:
+                blocks.append(df.iloc[block.top(): block.bottom() + 1, cols])
+        return summarize(blocks)
+
     def _show_row_detail(self, index) -> None:
         """Double-click handler: show the full row as a vertical field list,
         using the real (un-elided) values straight from the DataFrame."""
@@ -239,9 +386,13 @@ class FileTab(QWidget):
             row_text = f"{visible_rows:,} of {total_rows:,} rows"
         else:
             row_text = f"{total_rows:,} rows"
-        self.info_label.setText(
-            f"{file_name} — sheet '{self.sheet_name}'  ({row_text} x {cols:,} columns)"
-        )
+        text = f"{file_name} — sheet '{self.sheet_name}'  ({row_text} x {cols:,} columns)"
+        keys = self.model.sort_keys()
+        if keys:
+            text += "  · sorted by " + ", then ".join(
+                f"{col} {'▲' if asc else '▼'}" for col, asc in keys
+            )
+        self.info_label.setText(text)
 
     def apply_filters(self) -> None:
         """Recompute the combined quick-search + condition mask and apply it to the model."""
@@ -263,6 +414,7 @@ class FileTab(QWidget):
         # filter can reset column-hidden flags on some Qt versions.
         self.apply_column_visibility()
         self._emit_current_cell()  # the model reset cleared the current cell
+        self._summary_timer.start()  # ... and the selection
 
     def open_column_manager(self) -> None:
         dialog = ColumnManagerDialog(self.model.column_names(), self.hidden_columns, self)
@@ -343,6 +495,7 @@ class FileTab(QWidget):
             "quick_search_column": quick_column,
             "quick_search_text": quick_text,
             "conditions": conditions,
+            "sort": [[col, asc] for col, asc in self.model.sort_keys()],
         }
 
     def apply_saved_state(self, state: dict) -> None:
@@ -359,5 +512,7 @@ class FileTab(QWidget):
         )
         conditions = [FilterCondition.from_dict(d) for d in state.get("conditions", [])]
         self.filter_bar.set_conditions(conditions)
+
+        self.set_sort([(col, bool(asc)) for col, asc in state.get("sort", [])])
 
         self.apply_filters()

@@ -143,6 +143,9 @@ class FolderRuleDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         self.ok_button = buttons.button(QDialogButtonBox.StandardButton.Ok)
         self.ok_button.setText(ok_text)
+        # The button box sizes buttons without the stylesheet's padding, which
+        # clipped the first letter of a long label like this one.
+        self.ok_button.setMinimumWidth(self.ok_button.fontMetrics().horizontalAdvance(ok_text) + 48)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
